@@ -1,0 +1,10 @@
+celery==5.4.0
+fastapi==0.115.0
+psycopg2-binary
+redis==5.0.8
+requests==2.32.3
+SQLAlchemy==2.0.32
+uvicorn==0.30.6
+python-decouple==3.8
+websockets==13.1
+flower==2.0.1

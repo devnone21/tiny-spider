@@ -1,0 +1,57 @@
+name: spider
+
+services:
+
+  api:
+    build: ./spider
+    ports:
+      - "8000:8000"
+    command: uvicorn main:app --host 0.0.0.0 --reload
+    volumes:
+      - ./spider:/usr/src/app
+    depends_on:
+      - redis
+      - postgres
+
+  worker:
+    build: ./spider
+    command: ['celery', '-A', 'tasks.app', 'worker', '--pool=prefork', '--concurrency=3', '--loglevel=info']
+    volumes:
+      - ./spider:/usr/src/app
+    depends_on:
+      - api
+      - redis
+      - postgres
+
+  flower:
+    container_name: flower
+    build: ./spider
+    command: ['celery', '-A', 'tasks.app', 'flower', '--port=5555']
+    ports:
+      - "5555:5555"
+    depends_on:
+      - api
+      - redis
+      - worker
+
+  redis:
+    image: redis:latest
+    volumes:
+      - redis_data:/data/
+
+  postgres:
+    container_name: postgres
+    image: postgres:15.8
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    environment:
+      - POSTGRES_USER=${PGSQL_USER}
+      - POSTGRES_PASSWORD=${PGSQL_PASS}
+      - POSTGRES_DB=${PGSQL_DATABASE}
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

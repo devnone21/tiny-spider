@@ -2,10 +2,10 @@ import psycopg2
 from psycopg2.extras import execute_values
 from datetime import datetime, date, time, timedelta, timezone
 from typing import List
-from database import db_session, db_conn
-from models import Candle, CandleStat
-from schemas import CandleIn, CandleOut, CandleStatBase
-from XTBApi import Client, CommandFailed, SocketError
+from ..share.database import db_session, db_conn
+from .models import Candle, CandleStat
+from .schemas import CandleIn, CandleOut, CandleStatBase
+from .XTBApi import Client, CommandFailed, SocketError
 
 
 def error_message(message):
@@ -93,34 +93,41 @@ def upsert_ct(ct: CandleStatBase):
 # #
 # Exchange API
 # #
-def _get_chart_from_ts(client: Client, ts:int, symbol: str, period: int, tick: int) -> list:
+def _get_chart_from_ts(
+        client: Client,
+        ts:int,
+        symbol: str,
+        period: int,
+        tick: int
+) -> tuple[list, int]:
     """getChartRangeRequest function with retry"""
+    default_result = ([], 0)
     try:
         res: dict = client.get_chart_range_request(symbol, period, ts, ts, tick)
         if not res.get('status', False):
-            return []
+            return default_result
     except (AttributeError, CommandFailed, SocketError) as err:
         print(err)
         res: dict = client.login()
         if not res.get('status', False):
-            return []
+            return default_result
         res: dict = client.get_chart_range_request(symbol, period, ts, ts, tick)
         if not res.get('status', False):
-            return []
+            return default_result
 
     return_data = res.get('returnData', {})
-    # digits: int = return_data.get('digits', 0)
+    digits: int = return_data.get('digits', 0)
     candles: list = return_data.get('rateInfos', [])
-    return candles
+    return candles, digits
 
 
-def gather_present_candles(client, ct: CandleStatBase):
+def gather_present_candles(ct: CandleStatBase, client: Client) -> tuple[list, int]:
     """get present charts"""
     ts = int(datetime.now(timezone.utc).timestamp())
     return _get_chart_from_ts(client, ts, ct.symbol, ct.period, tick=-300)
 
 
-def _ct_max_backdate(timeframe):
+def _ct_max_backdate(timeframe) -> date:
     """Return suitable date to look back"""
     today_utc = datetime.now(timezone.utc).date()
     m = today_utc - timedelta(days=12*timeframe)
@@ -129,9 +136,10 @@ def _ct_max_backdate(timeframe):
     return m
 
 
-def gather_olden_candles(client, ct: CandleStatBase):
+def gather_olden_candles(ct: CandleStatBase, client: Client) -> tuple[list, int]:
     """get olden charts"""
+    default_result = ([], 0)
     if _ct_max_backdate(ct.period) >= ct.date_from:
-        return []
+        return default_result
     ts = int(datetime.combine(ct.date_from, time(0, 0)).timestamp())
     return _get_chart_from_ts(client, ts, ct.symbol, ct.period, tick=-500)

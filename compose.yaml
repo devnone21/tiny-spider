@@ -1,40 +1,47 @@
-name: spider
+name: tinyco
 
 services:
 
   api:
-    build: ./spider
+    build: ./src
+    image: tinyco/fastcelery:2.2
+    container_name: fastapi
+    command: uvicorn project.fast:app --host 0.0.0.0
     ports:
       - "8000:8000"
-    command: uvicorn main:app --host 0.0.0.0 --reload
     volumes:
-      - ./spider:/usr/src/app
+      - ./src:/usr/src/app
     depends_on:
       - redis
       - postgres
 
-  worker:
-    build: ./spider
-    command: ['celery', '-A', 'tasks.app', 'worker', '--pool=prefork', '--concurrency=3', '--loglevel=info']
+  worker-1: &worker
+    image: tinyco/fastcelery:2.2
+    container_name: worker-1
+    command: ['celery', '-A', 'project.tasks.app', 'worker', '--pool=solo', '--concurrency=3', '--loglevel=info']
     volumes:
-      - ./spider:/usr/src/app
+      - ./src:/usr/src/app
     depends_on:
       - api
       - redis
       - postgres
 
+  worker-2:
+    <<: *worker
+    container_name: worker-2
+
   flower:
+    image: tinyco/fastcelery:2.2
     container_name: flower
-    build: ./spider
-    command: ['celery', '-A', 'tasks.app', 'flower', '--port=5555']
+    command: ['celery', '-A', 'project.tasks.app', 'flower', '--port=5555']
     ports:
       - "5555:5555"
     depends_on:
       - api
       - redis
-      - worker
 
   redis:
+    container_name: redis
     image: redis:latest
     volumes:
       - redis_data:/data/
@@ -54,4 +61,6 @@ services:
 
 volumes:
   postgres_data:
+    external: true
   redis_data:
+    external: true

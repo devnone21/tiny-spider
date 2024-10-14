@@ -22,8 +22,6 @@ class Config:
         config("MONGODB_PASS", default="password"),
         config("MONGODB_HOST", default="localhost"),
     )
-    EXAPI_USER: str = config("EXAPI_USER", default="10155435")
-    ACCOUNT_FILE: str = config("ACCOUNT_FILE", default="account.json")
 
 
 LOGGING = {

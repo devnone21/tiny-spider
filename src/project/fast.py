@@ -1,9 +1,9 @@
 from celery.result import AsyncResult
 from fastapi import FastAPI, HTTPException
-from database import engine
-from models import Base
-from tasks import collect_candles
-import crud
+from .share.database import engine
+from .spider.models import Base
+from .spider import crud
+from .tasks import collect_candles
 
 Base.metadata.create_all(bind=engine)
 

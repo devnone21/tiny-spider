@@ -1,4 +1,4 @@
-from database import Base
+from ..share.database import Base
 from sqlalchemy import Column, String, Integer, BigInteger, Numeric, Date
 
 

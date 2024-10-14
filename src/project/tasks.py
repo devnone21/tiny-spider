@@ -1,12 +1,11 @@
 from datetime import datetime, date, timedelta, timezone
 from celery import Celery
 from celery.app import task
-from celery.signals import celeryd_init
 from pandas import DataFrame
 from pandas_ta import Strategy
 
 from .share.config import Config
-from .spider.exchange import ExchangeData, XTBSessionTask, init_session_pool_fifo
+from .spider.exchange import ExchangeData, XTBClientTask
 from .spider.schemas import CandleIn, CandleStatBase
 from .spider.crud import query_ct, insert_ct, update_ct, upsert_many_candles
 from .spider.crud import gather_present_candles, gather_olden_candles
@@ -23,15 +22,7 @@ app = Celery(
 )
 
 
-@celeryd_init.connect
-def init_session_pool(**kwargs):
-    """At Celery start, initial Redis FIFO Stream of session pool"""
-    workers = init_session_pool_fifo()
-    LOGGER.info(f"FIFO: xadd init {str(workers)}")
-    return kwargs
-
-
-@app.task(base=XTBSessionTask, bind=True)
+@app.task(base=XTBClientTask, bind=True)
 def collect_candles(self: task, symbol: str, period: int):
     """Worker task to collect candles by symbol & period"""
 
@@ -40,7 +31,7 @@ def collect_candles(self: task, symbol: str, period: int):
     _ct = CandleStatBase(
         symbol_id=ExchangeData.SYMBOL_ID.get(symbol),
         timeframe_id=ExchangeData.PERIOD_ID.get(period),
-        symbol=symbol, period=period,
+        symbol=symbol, period=period, digits=0,
         date_from=today_utc, date_until=today_utc
     )
     ct = query_ct(_ct.symbol_id, _ct.timeframe_id)
@@ -82,11 +73,12 @@ def collect_candles(self: task, symbol: str, period: int):
         present_ts = max([int(c['ctm']) for c in candles]) / 1000
         ct.date_until = date.fromtimestamp(present_ts)
 
+    ct.digits = digits
     update_ct(ct)
 
     return {
         "client": {
-            "user": self._client._user,
+            "user": self.user,
             "ws": str(self._client.ws.socket),
         },
         "task_id": next_task.id,

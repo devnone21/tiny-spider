@@ -25,3 +25,4 @@ class CandleStat(Base):
     period = Column("period", Integer)
     date_from = Column("date_from", Date)
     date_until = Column("date_until", Date)
+    digits = Column("digits", Integer)

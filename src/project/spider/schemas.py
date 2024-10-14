@@ -4,8 +4,6 @@ from datetime import date
 
 
 class CandleBase(BaseModel):
-    symbol_id: Optional[int] = 0
-    timeframe_id: Optional[int] = 0
     ctm: int
     ctmstring: Optional[str] = ''
     open: int | float
@@ -17,6 +15,8 @@ class CandleBase(BaseModel):
 
 class CandleIn(CandleBase):
     id: int
+    symbol_id: Optional[int] = 0
+    timeframe_id: Optional[int] = 0
 
     def as_tuple(self):
         return (
@@ -36,9 +36,10 @@ class CandleStatBase(BaseModel):
     period: int
     date_from: date
     date_until: date
+    digits: int
 
     def as_tuple(self):
         return (
             self.id, self.symbol_id, self. timeframe_id, self.symbol, self.period,
-            self.date_from, self.date_until
+            self.date_from, self.date_until, self.digits
         )

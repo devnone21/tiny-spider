@@ -1,9 +1,9 @@
+import os
 import json
-import logging
 from pathlib import Path
 from pydantic.dataclasses import dataclass
 from celery import Task
-from ..share.database import redis_conn
+
 from .XTBApi import Client
 
 
@@ -53,79 +53,14 @@ class ExchangeData:
     }
 
 
-def init_session_pool_fifo() -> list[str]:
-    """At Celery start, initial Redis FIFO Stream of session pool"""
-    fifo = redis_conn()
-    fifo_key = "XTBSessionPool"
-    fifo.delete(fifo_key)
-
-    workers = ExchangeData.ACCOUNTS.get("workers", "").split(',')
-    for user in workers:
-        token = ExchangeData.ACCOUNTS.get(user, {}).get('pass', '')
-        fifo.xadd(fifo_key, {"user": user, "token": token})
-    return workers
-
-
-def _extract_stream_info(sdata: list) -> tuple[str, dict]:
-    # sdata = [
-    #     [
-    #         'STREAM_KEY',
-    #         [
-    #             ('1728187084376-1', {'user': '12345678', 'password': 's3cr3t'})
-    #         ]
-    #      ]
-    # ]
-    entry_id, info = sdata[0][1][0]
-    return entry_id, info
-
-
-class XTBSessionTask(Task):
-    fifo_key = "XTBSessionPool"
-    info: dict = {}
-    mode: str = 'real'
-    last_used: int = 0
+class XTBClientTask(Task):
+    user: str = os.getenv('WORKER_ID', '')
     _client: Client | None = None
-    LOGGER = logging.getLogger(__name__)
 
     @property
     def client(self):
         if not self._client:
-            self._client = self.get_fifo()
+            token = ExchangeData.ACCOUNTS.get(self.user, {}).get('pass', '')
+            self._client = Client(self.user, token=token, mode='real')
+            self._client.login()
         return self._client
-
-    def get_fifo(self):
-        fifo = redis_conn()
-        res: list = fifo.xread(streams={self.fifo_key: 0}, count=1, block=200)
-        if not res:
-            self.LOGGER.info("FIFO: xread found nothing")
-            return
-
-        # try claim client
-        client_id, info = _extract_stream_info(res)
-        res = fifo.xdel(self.fifo_key, client_id)
-        if not res:
-            self.LOGGER.info("FIFO: xdel unable to claim")
-            return
-        session_ts = client_id.split("-")[0]
-        self.last_used = int(session_ts)
-        self.info = info
-
-        # init client
-        self._client = Client(info['user'], info['token'], self.mode)
-        res: dict = self._client.login()
-        if not res.get('status', False):
-            self.LOGGER.info(f"FIFO: login failed client {info['user']}")
-            self.reclaim()
-            return
-
-        # provide client
-        self.LOGGER.info(f"FIFO: provide client {info['user']}")
-        return self._client
-
-    def reclaim(self):
-        """reclaim the client back to Redis stream"""
-        if self._client:
-            self._client = None
-        fifo = redis_conn()
-        self.LOGGER.info(f"FIFO: xadd reclaim {self.info['user']}")
-        return fifo.xadd(self.fifo_key, self.info)

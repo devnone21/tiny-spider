@@ -4,7 +4,7 @@ services:
 
   api:
     build: ./src
-    image: tinyco/fastcelery:2.2
+    image: tinyco/fastcelery:2.3
     container_name: fastapi
     command: uvicorn project.fast:app --host 0.0.0.0
     ports:
@@ -16,9 +16,11 @@ services:
       - postgres
 
   worker-1: &worker
-    image: tinyco/fastcelery:2.2
+    image: tinyco/fastcelery:2.3
     container_name: worker-1
     command: ['celery', '-A', 'project.tasks.app', 'worker', '--pool=solo', '--concurrency=3', '--loglevel=info']
+    environment:
+      - WORKER_ID=${WORKER1}
     volumes:
       - ./src:/usr/src/app
     depends_on:
@@ -29,9 +31,11 @@ services:
   worker-2:
     <<: *worker
     container_name: worker-2
+    environment:
+      - WORKER_ID=${WORKER2}
 
   flower:
-    image: tinyco/fastcelery:2.2
+    image: tinyco/fastcelery:2.3
     container_name: flower
     command: ['celery', '-A', 'project.tasks.app', 'flower', '--port=5555']
     ports:

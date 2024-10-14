@@ -77,7 +77,11 @@ def update_ct(ct: CandleStatBase):
         db.query(CandleStat).filter(
             CandleStat.symbol_id == ct.symbol_id,
             CandleStat.timeframe_id == ct.timeframe_id
-        ).update({"date_from": db_ct.date_from, "date_until": db_ct.date_until})
+        ).update({
+            "date_from": db_ct.date_from,
+            "date_until": db_ct.date_until,
+            "digits": db_ct.digits,
+        })
         db.commit()
     return ct
 

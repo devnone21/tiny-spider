@@ -1,25 +1,16 @@
 from datetime import datetime, date, timedelta, timezone
-from celery import Celery
 from celery.app import task
 from pandas import DataFrame
 from pandas_ta import Strategy
-
-from .share.config import Config
-from .spider.exchange import ExchangeData, XTBClientTask
-from .spider.schemas import CandleIn, CandleStatBase
-from .spider.crud import (
+from ..tasks import app
+from .exchange import ExchangeData, XTBClientTask
+from .schemas import CandleIn, CandleStatBase
+from .crud import (
     query_ct, insert_ct, update_ct, upsert_many_candles, gather_present_candles, gather_olden_candles
 )
 import logging
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
-
-app = Celery(
-    "tasks",
-    broker=Config.REDIS_URI,
-    backend=Config.REDIS_URI,
-    # backend=f"db+{Config.PGSQL_URI}",
-)
 
 
 @app.task(base=XTBClientTask, bind=True)

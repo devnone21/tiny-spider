@@ -3,6 +3,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from contextlib import contextmanager
 from redis import Redis
+# from pymongo import MongoClient
+from motor.motor_asyncio import AsyncIOMotorClient
 from .config import Config
 
 DATABASE = Config.PGSQL_URI
@@ -32,3 +34,8 @@ def db_conn() -> psycopg2._psycopg.connection:
 
 def redis_conn() -> Redis:
     return Redis(Config.REDIS_HOST, decode_responses=True)
+
+
+async def mongo_conn():
+    # return MongoClient(Config.MONGO_URI)
+    return AsyncIOMotorClient(Config.MONGO_URI)

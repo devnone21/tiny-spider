@@ -1,21 +1,30 @@
 from celery.result import AsyncResult
 from fastapi import FastAPI, HTTPException
-from .share.database import engine
+from contextlib import asynccontextmanager
+from .share.database import engine, mongo_conn
 from .spider.models import Base
 from .spider import crud
 from .tasks import collect_candles
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI()
+
+@asynccontextmanager
+async def mongodb_lifespan(_app: FastAPI):
+    _app.mongodb = await mongo_conn()
+    yield
+    _app.mongodb.close()
 
 
-@app.get("/")
-def read_root():
+app = FastAPI(lifespan=mongodb_lifespan)
+
+
+@app.get("/", tags=["Root"])
+async def read_root():
     """
     Developer's greeting
     """
-    return {"Tiny": "Hello world"}
+    return {"message": "Homecoming!"}
 
 
 @app.post("/collect-candles/{symbol}/{period}", status_code=201)

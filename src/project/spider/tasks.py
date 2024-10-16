@@ -2,11 +2,12 @@ from datetime import datetime, date, timedelta, timezone
 from celery.app import task
 from pandas import DataFrame
 from pandas_ta import Strategy
-from ..tasks import app
+from ..worker import app
 from .exchange import ExchangeData, XTBClientTask
 from .schemas import CandleIn, CandleStatBase
 from .crud import (
-    query_ct, insert_ct, update_ct, upsert_many_candles, gather_present_candles, gather_olden_candles
+    query_ct, insert_ct, update_ct, upsert_many_candles,
+    gather_present_candles, gather_olden_candles
 )
 import logging
 LOGGER = logging.getLogger(__name__)
@@ -17,15 +18,18 @@ LOGGER.setLevel(logging.INFO)
 def collect_candles(self: task, symbol: str, period: int):
     """Worker task to collect candles by symbol & period"""
 
+    symbol_id = ExchangeData.SYMBOL_ID.get(symbol)
+    period_id = ExchangeData.PERIOD_ID.get(period)
+
     # get candles stats
     today_utc = datetime.now(timezone.utc).date()
     _ct = CandleStatBase(
-        symbol_id=ExchangeData.SYMBOL_ID.get(symbol),
-        timeframe_id=ExchangeData.PERIOD_ID.get(period),
+        symbol_id=symbol_id,
+        timeframe_id=period_id,
         symbol=symbol, period=period, digits=0,
         date_from=today_utc, date_until=today_utc
     )
-    ct = query_ct(_ct.symbol_id, _ct.timeframe_id)
+    ct = query_ct(symbol_id, period_id)
     if not ct:
         ct = insert_ct(_ct)
 
@@ -40,9 +44,9 @@ def collect_candles(self: task, symbol: str, period: int):
 
     # store new candles in DB
     model_candles = [CandleIn(
-        id=ct.symbol_id * 10 + ct.timeframe_id + candle['ctm'],
-        symbol_id=ct.symbol_id,
-        timeframe_id=ct.timeframe_id,
+        id=symbol_id * 10 + period_id + candle['ctm'],
+        symbol_id=symbol_id,
+        timeframe_id=period_id,
         ctm=candle['ctm'],
         ctmstring=candle['ctmString'],
         open=candle['open'],
@@ -54,7 +58,7 @@ def collect_candles(self: task, symbol: str, period: int):
 
     # create task technical analysis
     ct.digits = digits
-    next_task = technical_analysis.delay(candles, ct)
+    next_task = technical_analysis.delay(candles, symbol_id, period_id, digits)
 
     # update candles stats - date_from
     olden_ts = 0 if not olden_candles else min([int(c['ctm']) for c in olden_candles]) / 1000
@@ -77,11 +81,9 @@ def collect_candles(self: task, symbol: str, period: int):
 
 
 @app.task
-def technical_analysis(rate_infos: list, ct: CandleStatBase):
+def technical_analysis(rate_infos: list, symbol_id: int, period_id: int, digits: int):
     if not rate_infos:
         return {"result": "No Data"}
-
-    digits = ct.digits
 
     rate_infos.sort(key=lambda by: by['ctm'])
     candles = DataFrame(rate_infos)
@@ -95,7 +97,7 @@ def technical_analysis(rate_infos: list, ct: CandleStatBase):
         df = candles.copy()
         df.ta.strategy(Strategy(name=name, ta=tech))
         df.dropna(inplace=True, ignore_index=True)
-        df['id'] = ct.symbol_id * 10 + ct.timeframe_id + df['ctm']
+        df['id'] = symbol_id * 10 + period_id + df['ctm']
         result[name] = df.tail(1).to_json(orient="index")
 
     return result

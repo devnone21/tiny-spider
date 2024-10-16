@@ -4,7 +4,7 @@ services:
 
   api:
     build: ./src
-    image: tinyco/fastcelery:2.3
+    image: tinyco/fastcelery:${BUILD_TAG:-latest}
     container_name: fastapi
     command: uvicorn project.fast:app --host 0.0.0.0
     ports:
@@ -14,11 +14,12 @@ services:
     depends_on:
       - redis
       - postgres
+      - mongo
 
   worker-1: &worker
-    image: tinyco/fastcelery:2.3
+    image: tinyco/fastcelery:${BUILD_TAG:-latest}
     container_name: worker-1
-    command: ['celery', '-A', 'project.tasks.app', 'worker', '--pool=solo', '--concurrency=3', '--loglevel=info']
+    command: ['celery', '-A', 'project.worker.app', 'worker', '--pool=solo', '--concurrency=3', '--loglevel=info']
     environment:
       - WORKER_ID=${WORKER1}
     volumes:
@@ -27,6 +28,7 @@ services:
       - api
       - redis
       - postgres
+      - mongo
 
   worker-2:
     <<: *worker
@@ -35,9 +37,9 @@ services:
       - WORKER_ID=${WORKER2}
 
   flower:
-    image: tinyco/fastcelery:2.3
+    image: tinyco/fastcelery:${BUILD_TAG:-latest}
     container_name: flower
-    command: ['celery', '-A', 'project.tasks.app', 'flower', '--port=5555']
+    command: ['celery', '-A', 'project.worker.app', 'flower', '--port=5555']
     ports:
       - "5555:5555"
     depends_on:
@@ -63,8 +65,25 @@ services:
       - "5432:5432"
     restart: unless-stopped
 
+  mongo:
+    container_name: mongo
+    image: mongo:8.0.1
+    volumes:
+      - mongo_data:/data/db
+      - mongo_config:/data/configdb
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGODB_USER}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGODB_PASS}
+    ports:
+      - "27017:27017"
+    restart: unless-stopped
+
 volumes:
   postgres_data:
     external: true
   redis_data:
+    external: true
+  mongo_data:
+    external: true
+  mongo_config:
     external: true

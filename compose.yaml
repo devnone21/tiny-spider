@@ -39,7 +39,7 @@ services:
   worker-3:
     <<: *worker
     container_name: worker-3
-    command: ['celery', '-A', 'project.worker.app', 'worker', '-Q', 'pool_any', '--pool=threads', '--loglevel=info']
+    command: ['celery', '-A', 'project.worker.app', 'worker', '-Q', 'pool_any', '--pool=threads']
     environment:
       - WORKER_ID=${WORKER3}
 

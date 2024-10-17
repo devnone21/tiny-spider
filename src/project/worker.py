@@ -13,7 +13,7 @@ app = Celery(
     include=['project.spider.tasks'],
     task_routes={
         "project.spider.tasks.collect_candles": {"queue": "pool_solo"},
-        "project.spider.tasks.technical_analysis": {"queue": "pool_any"}
+        "project.spider.tasks.upsert_technical_analysis": {"queue": "pool_any"}
     }
 )
 

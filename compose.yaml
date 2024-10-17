@@ -1,10 +1,13 @@
 name: tinyco
 
+x-common-image: &image
+  image: tinyco/fastcelery:3.3
+
 services:
 
   api:
     build: ./src
-    image: tinyco/fastcelery:${BUILD_TAG:-latest}
+    <<: *image
     container_name: fastapi
     command: ['uvicorn', 'project.fast:app', '--host', '0.0.0.0']
     ports:
@@ -17,7 +20,7 @@ services:
       - mongo
 
   worker-1: &worker
-    image: tinyco/fastcelery:${BUILD_TAG:-latest}
+    <<: *image
     container_name: worker-1
     command: ['celery', '-A', 'project.worker.app', 'worker', '-Q', 'pool_solo,pool_any', '--pool=solo']
     environment:
@@ -44,7 +47,7 @@ services:
       - WORKER_ID=${WORKER3}
 
   flower:
-    image: tinyco/fastcelery:${BUILD_TAG:-latest}
+    <<: *image
     container_name: flower
     command: ['celery', '-A', 'project.worker.app', 'flower', '--port=5555']
     ports:

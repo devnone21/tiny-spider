@@ -3,6 +3,7 @@ from typing import List, Iterable, Any
 
 from psycopg2 import OperationalError
 from psycopg2.extras import execute_values
+from pymongo import ReplaceOne
 from pymongo.database import Database
 from pymongo.errors import BulkWriteError
 
@@ -159,11 +160,12 @@ def gather_olden_candles(ct: CandleStatBase, client: Client) -> tuple[list, int]
 # #
 # MongoDB
 # #
-def upsert_many(
+def insert_many(
         db: Database,
         collection: str,
         data: Iterable[dict[str, Any]]
 ) -> int:
+    """MongoDB batch insert (on conflict _id, do nothing). Return: number of inserted rows."""
     n_inserted = -1
     try:
         res = db[collection].insert_many(data, ordered=False)
@@ -180,23 +182,71 @@ def upsert_many(
         return n_inserted
 
 
-# def upsert_many_ta(
-#         name: str, tech: list[dict],
-#         data: DataFrame,
-#         symbol_id: int, period_id: int,
-#         db: Database,
-# ) -> int:
-#     df = data.copy()
-#     # fx
-#     df.ta.strategy(Strategy(name=name, ta=tech))
-#     df.dropna(inplace=True, ignore_index=True)
-#     # filter columns
-#     cols = df.columns.to_list()
-#     dropped_cols = ['ctm', 'ctmString', 'open', 'close', 'high', 'low', 'vol']
-#     selected_cols = [c for c in cols if c not in dropped_cols]
-#     # additional columns
-#     df['_id'] = symbol_id * 10 + period_id + df['ctm']
-#     df['last_update'] = datetime.now(timezone.utc)
-#     # final columns
-#     final_cols = ['_id'] + selected_cols + ['last_update']
-#     return upsert_many(db, collection=name, data=df[final_cols].to_dict(orient='records'))
+def upsert_many(
+        db: Database,
+        collection: str,
+        data: Iterable[dict[str, Any]]
+) -> int:
+    """MongoDB batch upsert (on conflict _id, do update). Return: number of upserted rows."""
+    n_inserted = -1
+    try:
+        requests = [
+            ReplaceOne({'id': rec.get('id', 0)}, rec, upsert=True)
+            for rec in data
+        ]
+        res = db[collection].bulk_write(requests)
+        n_inserted = len(res.upserted_ids)
+        LOGGER.info(
+            f'{collection}: nInserted={res.upserted_count}, nModified={res.modified_count}'
+        )
+    except BulkWriteError as err:
+        n_errors = len(err.details.get('writeErrors', []))
+        n_inserted = int(err.details.get('nInserted')) + int(err.details.get('nUpserted'))
+        LOGGER.info(f'{collection}: nInserted={n_inserted}, writeErrors={n_errors}')
+    except (AttributeError, TypeError) as err:
+        n_inserted = -3
+        LOGGER.error(err)
+    finally:
+        return n_inserted
+
+
+def bulkwrite_handler(func):
+    def wrapper(*args, **kwargs) -> dict[str, int]:
+        collection = kwargs.get("collection", "collection")
+        try:
+            res: dict[str, int] = func(*args, **kwargs)
+            LOGGER.info(
+                f'{collection}: nInserted={res.get("nInserted", 0)}, ' +
+                f'nModified={res.get("nModified", 0)}'
+            )
+            return res
+        except BulkWriteError as err:
+            n_errors = len(err.details.get('writeErrors', []))
+            n_inserted = int(err.details.get('nInserted')) + int(err.details.get('nUpserted'))
+            LOGGER.info(f'{collection}: nInserted={n_inserted}, writeErrors={n_errors}')
+            return {"nInserted": n_inserted}
+        except (AttributeError, TypeError) as err:
+            LOGGER.error(err)
+
+    return wrapper
+
+
+@bulkwrite_handler
+def bulk_insert(db: Database, collection: str, data: Iterable[dict[str, Any]]):
+    """MongoDB bulk insert (on conflict _id, do nothing). Return: number of inserted rows."""
+    res = db[collection].insert_many(data, ordered=False)
+    return {"nInserted": len(res.inserted_ids)}
+
+
+@bulkwrite_handler
+def bulk_upsert(db: Database, collection: str, data: Iterable[dict[str, Any]]):
+    """MongoDB bulk upsert (on conflict _id, do update). Return: number of upserted rows."""
+    requests = [
+        ReplaceOne({'id': rec.get('id', 0)}, rec, upsert=True)
+        for rec in data
+    ]
+    res = db[collection].bulk_write(requests)
+    return {
+        "nInserted": int(res.upserted_count) + int(res.inserted_count),
+        "nModified": int(res.modified_count)
+    }

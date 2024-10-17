@@ -10,7 +10,7 @@ from .schemas import CandleIn, CandleStatBase
 from .crud import (
     query_ct, insert_ct, update_ct, upsert_many_candles,
     gather_present_candles, gather_olden_candles,
-    upsert_many
+    bulk_upsert
 )
 
 
@@ -36,7 +36,6 @@ def collect_candles(self: task, symbol: str, period: int):
     # gather candles
     candles, digits = gather_present_candles(ct, self.client)
     olden_candles, _ = gather_olden_candles(ct, self.client)
-    # candles.extend(olden_candles)
 
     # return if nothing new
     if not candles and not olden_candles:
@@ -44,14 +43,10 @@ def collect_candles(self: task, symbol: str, period: int):
 
     # create task technical analysis
     for name, tech in ExchangeData.PRESETS.items():
-        ta_task_send = upsert_technical_analysis.apply_async(
+        upsert_technical_analysis.apply_async(
             args=(name, tech, candles, symbol_id, period_id, digits),
             queue='pool_any'
         )
-    # ta_task_send = technical_analysis.apply_async(
-    #     args=(candles, symbol_id, period_id, digits),
-    #     queue='pool_any'
-    # )
 
     # store new candles in DB
     model_candles = [CandleIn(
@@ -87,53 +82,6 @@ def collect_candles(self: task, symbol: str, period: int):
     }
 
 
-# @app.task   # (base=MongoDBTask, bind=True)
-# def technical_analysis(
-#         # self: task,
-#         rate_infos: list,
-#         symbol_id: int,
-#         period_id: int,
-#         digits: int
-# ) -> dict[str, int]:
-#     # db: Database = self.db
-#     if not rate_infos:
-#         return {"input": 0}
-#
-#     rate_infos.sort(key=lambda by: by['ctm'])
-#     candles = DataFrame(rate_infos)
-#     candles['close'] = (candles['open'] + candles['close']) / 10 ** digits
-#     candles['high'] = (candles['open'] + candles['high']) / 10 ** digits
-#     candles['low'] = (candles['open'] + candles['low']) / 10 ** digits
-#     candles['open'] = candles['open'] / 10 ** digits
-#
-#     for name, tech in ExchangeData.PRESETS.items():
-#         upsert_ta_task_send = upsert_many_ta.apply_async(
-#             args=(name, tech, candles, symbol_id, period_id),
-#             queue='pool_any'
-#         )
-
-    # def upsert_many_ta(name: str, tech: list[dict]) -> int:
-    #     df = candles.copy()
-    #     # fx
-    #     df.ta.strategy(Strategy(name=name, ta=tech))
-    #     df.dropna(inplace=True, ignore_index=True)
-    #     # filter columns
-    #     cols = df.columns.to_list()
-    #     dropped_cols = ['ctm', 'ctmString', 'open', 'close', 'high', 'low', 'vol']
-    #     selected_cols = [c for c in cols if c not in dropped_cols]
-    #     # additional columns
-    #     df['_id'] = symbol_id * 10 + period_id + df['ctm']
-    #     df['last_update'] = datetime.now(timezone.utc)
-    #     # final columns
-    #     final_cols = ['_id'] + selected_cols + ['last_update']
-    #     return upsert_many(db, collection=name, data=df[final_cols].to_dict(orient='records'))
-
-    # return {
-    #     name: upsert_many_ta(name, tech)
-    #     for name, tech in ExchangeData.PRESETS.items()
-    # }
-
-
 @app.task(base=MongoDBTask, bind=True)
 def upsert_technical_analysis(
         self: task,
@@ -143,7 +91,10 @@ def upsert_technical_analysis(
         period_id: int,
         digits: int,
 ):
+    """Worker task to upsert TA results by symbol & period"""
+
     db: Database = self.db
+
     # prepare data
     candles.sort(key=lambda by: by['ctm'])
     df = DataFrame(candles)
@@ -159,16 +110,17 @@ def upsert_technical_analysis(
     dropped_cols = ['ctm', 'ctmString', 'open', 'close', 'high', 'low', 'vol']
     selected_cols = [c for c in cols if c not in dropped_cols]
     # additional columns
-    df['_id'] = symbol_id * 10 + period_id + df['ctm']
+    df['symbol_code'] = symbol_id * 10 + period_id
+    df['id'] = df['ctm'] + symbol_id * 10 + period_id
     df['last_update'] = datetime.now(timezone.utc)
     # final columns
-    final_cols = ['_id'] + selected_cols + ['last_update']
-    n_inserted = upsert_many(
+    final_cols = ['id', 'symbol_code'] + selected_cols + ['last_update']
+    res = bulk_upsert(
             db, collection=strategy,
             data=df[final_cols].to_dict(orient='records')
     )
     return {
         "symbol": symbol_id * 10 + period_id,
         "strategy": strategy,
-        "nInserted": n_inserted,
+        "nInserted": res.get("nInserted", 0),
     }

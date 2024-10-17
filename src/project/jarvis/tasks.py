@@ -1,17 +1,17 @@
 from datetime import datetime, date, timedelta, timezone
 from celery.app import task
-from pymongo.database import Database
 from pandas import DataFrame
 from pandas_ta import Strategy
-
-from ..worker import app, XTBClientTask, MongoDBTask
-from .exchange import ExchangeData
+from ..worker import app
+from .exchange import ExchangeData, XTBClientTask
 from .schemas import CandleIn, CandleStatBase
 from .crud import (
     query_ct, insert_ct, update_ct, upsert_many_candles,
-    gather_present_candles, gather_olden_candles,
-    upsert_many
+    gather_present_candles, gather_olden_candles
 )
+import logging
+LOGGER = logging.getLogger(__name__)
+LOGGER.setLevel(logging.INFO)
 
 
 @app.task(base=XTBClientTask, bind=True)
@@ -58,10 +58,7 @@ def collect_candles(self: task, symbol: str, period: int):
 
     # create task technical analysis
     ct.digits = digits
-    ta_task_send = technical_analysis.apply_async(
-        args=(candles, symbol_id, period_id, digits),
-        queue='pool_any'
-    )
+    next_task = technical_analysis.delay(candles, symbol_id, period_id, digits)
 
     # update candles stats - date_from
     olden_ts = 0 if not olden_candles else min([int(c['ctm']) for c in olden_candles]) / 1000
@@ -79,21 +76,14 @@ def collect_candles(self: task, symbol: str, period: int):
             "user": self.user,
             "ws": str(self._client.ws.socket),
         },
-        "task_id": ta_task_send.id,
+        "task_id": next_task.id,
     }
 
 
-@app.task(base=MongoDBTask, bind=True)
-def technical_analysis(
-        self: task,
-        rate_infos: list,
-        symbol_id: int,
-        period_id: int,
-        digits: int
-) -> dict[str, int]:
-    db: Database = self.db
+@app.task
+def technical_analysis(rate_infos: list, symbol_id: int, period_id: int, digits: int):
     if not rate_infos:
-        return {"input": 0}
+        return {"result": "No Data"}
 
     rate_infos.sort(key=lambda by: by['ctm'])
     candles = DataFrame(rate_infos)
@@ -102,23 +92,12 @@ def technical_analysis(
     candles['low'] = (candles['open'] + candles['low']) / 10 ** digits
     candles['open'] = candles['open'] / 10 ** digits
 
-    def upsert_many_ta(name: str, tech: list[dict]) -> int:
+    result = {}
+    for name, tech in ExchangeData.PRESETS.items():
         df = candles.copy()
-        # fx
         df.ta.strategy(Strategy(name=name, ta=tech))
         df.dropna(inplace=True, ignore_index=True)
-        # filter columns
-        cols = df.columns.to_list()
-        dropped_cols = ['ctm', 'ctmString', 'open', 'close', 'high', 'low', 'vol']
-        selected_cols = [c for c in cols if c not in dropped_cols]
-        # additional columns
-        df['_id'] = symbol_id * 10 + period_id + df['ctm']
-        df['last_update'] = datetime.now(timezone.utc)
-        # final columns
-        final_cols = ['_id'] + selected_cols + ['last_update']
-        return upsert_many(db, collection=name, data=df[final_cols].to_dict(orient='records'))
+        df['id'] = symbol_id * 10 + period_id + df['ctm']
+        result[name] = df.tail(1).to_json(orient="index")
 
-    return {
-        name: upsert_many_ta(name, tech)
-        for name, tech in ExchangeData.PRESETS.items()
-    }
+    return result

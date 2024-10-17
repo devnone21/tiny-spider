@@ -8,10 +8,7 @@ router = APIRouter()
 
 @router.post("/{symbol}/{period}", response_description="Candles collection task to Workers")
 def send_task_candles(symbol: str, period: int):
-    task = collect_candles.apply_async(
-        args=(symbol, period),
-        queue='pool_solo'
-    )
+    task = collect_candles.delay(symbol, period)
     return {"task_id": task.id}
 
 

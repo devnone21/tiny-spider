@@ -1,10 +1,6 @@
-import os
 import json
 from pathlib import Path
 from pydantic.dataclasses import dataclass
-from celery import Task
-
-from .XTBApi import Client
 
 
 @dataclass
@@ -51,16 +47,3 @@ class ExchangeData:
                 "kind": "macd", "fast": 25, "slow": 50, "signal_indicators": True,
         }],
     }
-
-
-class XTBClientTask(Task):
-    user: str = os.getenv('WORKER_ID', '')
-    _client: Client | None = None
-
-    @property
-    def client(self):
-        if not self._client:
-            token = ExchangeData.ACCOUNTS.get(self.user, {}).get('pass', '')
-            self._client = Client(self.user, token=token, mode='real')
-            self._client.login()
-        return self._client

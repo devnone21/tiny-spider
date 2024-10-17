@@ -6,7 +6,7 @@ services:
     build: ./src
     image: tinyco/fastcelery:${BUILD_TAG:-latest}
     container_name: fastapi
-    command: uvicorn project.fast:app --host 0.0.0.0
+    command: ['uvicorn', 'project.fast:app', '--host', '0.0.0.0']
     ports:
       - "8000:8000"
     volumes:
@@ -19,7 +19,7 @@ services:
   worker-1: &worker
     image: tinyco/fastcelery:${BUILD_TAG:-latest}
     container_name: worker-1
-    command: ['celery', '-A', 'project.worker.app', 'worker', '--pool=solo', '--concurrency=3', '--loglevel=info']
+    command: ['celery', '-A', 'project.worker.app', 'worker', '-Q', 'pool_solo,pool_any', '--pool=solo']
     environment:
       - WORKER_ID=${WORKER1}
     volumes:
@@ -35,6 +35,13 @@ services:
     container_name: worker-2
     environment:
       - WORKER_ID=${WORKER2}
+
+  worker-3:
+    <<: *worker
+    container_name: worker-3
+    command: ['celery', '-A', 'project.worker.app', 'worker', '-Q', 'pool_any', '--pool=threads', '--loglevel=info']
+    environment:
+      - WORKER_ID=${WORKER3}
 
   flower:
     image: tinyco/fastcelery:${BUILD_TAG:-latest}

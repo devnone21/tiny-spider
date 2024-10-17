@@ -17,6 +17,7 @@ class Config:
         config("PGSQL_HOST", default="localhost"),
         config("PGSQL_DATABASE", default="mydb"),
     )
+    MONGODB_NAME: str = config("MONGODB_NAME", default="test")
     MONGO_URI: str = "mongodb://%s:%s@%s" % (
         config("MONGODB_USER", default="user"),
         config("MONGODB_PASS", default="password"),

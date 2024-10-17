@@ -1,11 +1,18 @@
-import psycopg2
-from psycopg2.extras import execute_values
 from datetime import datetime, date, time, timedelta, timezone
-from typing import List
-from ..share.database import db_session, db_conn
+from typing import List, Iterable, Any
+
+from psycopg2 import OperationalError
+from psycopg2.extras import execute_values
+from pymongo.database import Database
+from pymongo.errors import BulkWriteError
+
+from ..database import db_session, db_conn
 from .models import Candle, CandleStat
 from .schemas import CandleIn, CandleOut, CandleStatBase
 from .XTBApi import Client, CommandFailed, SocketError
+import logging
+LOGGER = logging.getLogger("Spider.CRUD")
+LOGGER.setLevel(logging.INFO)
 
 
 def error_message(message):
@@ -14,7 +21,7 @@ def error_message(message):
 
 
 # #
-# Database
+# Postgres
 # #
 def get_candles(symbol_id: int, timeframe_id: int, skip: int = 0, limit: int = 100):
     """Query candles from DB. Return: List of Candle object."""
@@ -90,7 +97,7 @@ def upsert_ct(ct: CandleStatBase):
     """Upsert candles stat. Return: CandleStat object."""
     try:
         update_ct(ct)
-    except psycopg2.OperationalError:
+    except OperationalError:
         insert_ct(ct)
 
 
@@ -147,3 +154,49 @@ def gather_olden_candles(ct: CandleStatBase, client: Client) -> tuple[list, int]
         return default_result
     ts = int(datetime.combine(ct.date_from, time(0, 0)).timestamp())
     return _get_chart_from_ts(client, ts, ct.symbol, ct.period, tick=-500)
+
+
+# #
+# MongoDB
+# #
+def upsert_many(
+        db: Database,
+        collection: str,
+        data: Iterable[dict[str, Any]]
+) -> int:
+    n_inserted = -1
+    try:
+        res = db[collection].insert_many(data, ordered=False)
+        n_inserted = len(res.inserted_ids)
+        LOGGER.info(f'{collection}: nInserted={n_inserted}')
+    except BulkWriteError as err:
+        n_errors = len(err.details.get('writeErrors'))
+        n_inserted = int(err.details.get('nInserted'))
+        LOGGER.info(f'{collection}: nInserted={n_inserted}, writeErrors={n_errors}')
+    except (AttributeError, TypeError) as err:
+        n_inserted = -13
+        LOGGER.error(err)
+    finally:
+        return n_inserted
+
+
+# def upsert_many_ta(
+#         name: str, tech: list[dict],
+#         data: DataFrame,
+#         symbol_id: int, period_id: int,
+#         db: Database,
+# ) -> int:
+#     df = data.copy()
+#     # fx
+#     df.ta.strategy(Strategy(name=name, ta=tech))
+#     df.dropna(inplace=True, ignore_index=True)
+#     # filter columns
+#     cols = df.columns.to_list()
+#     dropped_cols = ['ctm', 'ctmString', 'open', 'close', 'high', 'low', 'vol']
+#     selected_cols = [c for c in cols if c not in dropped_cols]
+#     # additional columns
+#     df['_id'] = symbol_id * 10 + period_id + df['ctm']
+#     df['last_update'] = datetime.now(timezone.utc)
+#     # final columns
+#     final_cols = ['_id'] + selected_cols + ['last_update']
+#     return upsert_many(db, collection=name, data=df[final_cols].to_dict(orient='records'))

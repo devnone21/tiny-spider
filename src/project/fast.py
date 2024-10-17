@@ -1,21 +1,15 @@
 from celery.result import AsyncResult
 from fastapi import FastAPI
-from contextlib import asynccontextmanager
-from .share.database import engine, mongo_conn
+from .database import engine
 from .spider.models import Base
 from .spider.route import router as SpiderRouter
-
-
-@asynccontextmanager
-async def mongodb_lifespan(_app: FastAPI):
-    _app.mongodb = await mongo_conn()
-    yield
-    _app.mongodb.close()
+# from .jarvis.route import router as JarvisRouter
 
 
 Base.metadata.create_all(bind=engine)
-app = FastAPI(lifespan=mongodb_lifespan)
+app = FastAPI()
 app.include_router(SpiderRouter, tags=["Spider"], prefix="/candles")
+# app.include_router(JarvisRouter, tags=["Jarvis"], prefix="/fx")
 
 
 @app.get("/", tags=["Root"])

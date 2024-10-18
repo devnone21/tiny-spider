@@ -4,7 +4,7 @@ from pydantic.dataclasses import dataclass
 
 
 @dataclass
-class ExchangeData:
+class Exchange:
     SYMBOL_DEFAULT = (
         ('GOLD', 5), ('GOLD', 15), ('GOLD', 30), ('GOLD', 60),
         ('GOLD.FUT', 15), ('GOLD.FUT', 30), ('GOLD.FUT', 60),

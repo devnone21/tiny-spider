@@ -1,11 +1,12 @@
 from datetime import datetime, date, timedelta, timezone
 from celery.app import task
+from celery.schedules import crontab
 from pymongo.database import Database
 from pandas import DataFrame
 from pandas_ta import Strategy
 
-from ..worker import app, XTBClientTask, MongoDBTask
-from .exchange import ExchangeData
+from ..worker import app, CandleTask, TATask
+from .exchange import Exchange
 from .schemas import CandleIn, CandleStatBase
 from .crud import (
     query_ct, insert_ct, update_ct, upsert_many_candles,
@@ -14,12 +15,25 @@ from .crud import (
 )
 
 
-@app.task(base=XTBClientTask, bind=True)
+@app.on_after_configure.connect
+def setup_cron_tasks(sender, **kwargs):
+    # Execute every 15 minutes, on Workdays.
+    for symbol, period in Exchange.SYMBOL_DEFAULT + Exchange.SYMBOL_SUBSCRIBE:
+        sender.add_periodic_task(
+            crontab(minute='*/15', hour='*', day_of_week='mon-fri'),
+            collect_candles.s(
+                args=(symbol, period),
+                queue='pool_solo'
+            )
+        )
+
+
+@app.task(base=CandleTask, bind=True)
 def collect_candles(self: task, symbol: str, period: int):
     """Worker task to collect candles by symbol & period"""
 
-    symbol_id = ExchangeData.SYMBOL_ID.get(symbol)
-    period_id = ExchangeData.PERIOD_ID.get(period)
+    symbol_id: int = self.symbol_ids.get(symbol)
+    period_id: int = self.period_ids.get(period)
 
     # get candles stats
     today_utc = datetime.now(timezone.utc).date()
@@ -42,9 +56,9 @@ def collect_candles(self: task, symbol: str, period: int):
         return
 
     # create task technical analysis
-    for name, tech in ExchangeData.PRESETS.items():
+    for name, _ in self.presets.items():
         upsert_technical_analysis.apply_async(
-            args=(name, tech, candles, symbol_id, period_id, digits),
+            args=(name, symbol_id, period_id, digits, candles),
             queue='pool_any'
         )
 
@@ -82,18 +96,19 @@ def collect_candles(self: task, symbol: str, period: int):
     }
 
 
-@app.task(base=MongoDBTask, bind=True)
+@app.task(base=TATask, bind=True)
 def upsert_technical_analysis(
         self: task,
-        strategy: str, ta: list[dict],
-        candles: list,
+        strategy: str,
         symbol_id: int,
         period_id: int,
         digits: int,
+        candles: list,
 ):
     """Worker task to upsert TA results by symbol & period"""
 
     db: Database = self.db
+    presets: dict[str, list] = self.presets
 
     # prepare data
     candles.sort(key=lambda by: by['ctm'])
@@ -103,6 +118,7 @@ def upsert_technical_analysis(
     df['low'] = (df['open'] + df['low']) / 10 ** digits
     df['open'] = df['open'] / 10 ** digits
     # apply strategy
+    ta = presets.get(strategy, [])
     df.ta.strategy(Strategy(name=strategy, ta=ta))
     df.dropna(inplace=True, ignore_index=True)
     # filter columns
@@ -120,7 +136,7 @@ def upsert_technical_analysis(
             data=df[final_cols].to_dict(orient='records')
     )
     return {
+        "nInserted": res.get("nInserted", 0),
         "symbol": symbol_id * 10 + period_id,
         "strategy": strategy,
-        "nInserted": res.get("nInserted", 0),
     }
